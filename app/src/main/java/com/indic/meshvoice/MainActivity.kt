@@ -28,7 +28,9 @@ import com.indic.meshvoice.ui.theme.IndicMeshVoiceTheme
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var meshEngine: MeshEngine
+    private val meshEngine: MeshEngine
+        get() = (application as IndicMeshApp).meshEngine
+
     private lateinit var indicAsr: Ai4BharatIndicASR
     private lateinit var indicTts: Ai4BharatIndicTTS
     private lateinit var voiceAudioEngine: OfflineVoiceAudioEngine
@@ -56,11 +58,6 @@ class MainActivity : ComponentActivity() {
         if (allGranted) {
             checkAndEnableRadios()
         } else {
-            Toast.makeText(
-                this,
-                "Microphone, Bluetooth, and Nearby permissions are required for offline mesh voice",
-                Toast.LENGTH_LONG
-            ).show()
             checkAndEnableRadios()
         }
     }
@@ -74,7 +71,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        meshEngine = MeshEngine(this)
         indicAsr = Ai4BharatIndicASR(this).apply { init() }
         indicTts = Ai4BharatIndicTTS(this).apply { init() }
         voiceAudioEngine = OfflineVoiceAudioEngine(this)

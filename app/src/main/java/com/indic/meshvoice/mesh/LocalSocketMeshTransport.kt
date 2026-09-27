@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Features:
  *  - Instant sub-50ms peer discovery over local Wi-Fi / Hotspot / Ad-Hoc networks.
  *  - MulticastLock acquisition for Android Wi-Fi driver packet passing.
- *  - Zero handshake delay.
+ *  - Compatible with all Android versions down to Lollipop (API 21).
  */
 class LocalSocketMeshTransport(
     private val context: Context,
@@ -51,11 +51,12 @@ class LocalSocketMeshTransport(
 
         scope.launch {
             try {
-                socket = DatagramSocket(null).apply {
-                    reuseAddress = true
-                    broadcast = true
-                    bind(InetSocketAddress(port))
+                socket = try {
+                    DatagramSocket(port)
+                } catch (e: Exception) {
+                    DatagramSocket(InetSocketAddress(InetAddress.getByName("0.0.0.0"), port))
                 }
+                socket?.broadcast = true
                 AppLogger.log(tag, "⚡ Ultra-Fast Local UDP Mesh Socket online on port $port")
 
                 // Launch receiver loop
@@ -132,9 +133,7 @@ class LocalSocketMeshTransport(
                     onPacketReceived(payloadJson, fromIp)
                 }
             }
-        } catch (e: Exception) {
-            // Non-json packet, ignore
-        }
+        } catch (e: Exception) {}
     }
 
     private suspend fun heartbeatLoop() {
@@ -190,8 +189,8 @@ class LocalSocketMeshTransport(
             val targetAddrs = listOfNotNull(
                 getBroadcastAddress(),
                 InetAddress.getByName("255.255.255.255"),
-                InetAddress.getByName("192.168.43.255"), // Standard Android Hotspot Subnet Broadcast
-                InetAddress.getByName("192.168.49.255")  // Standard Wi-Fi Direct Subnet Broadcast
+                InetAddress.getByName("192.168.43.255"),
+                InetAddress.getByName("192.168.49.255")
             ).distinct()
 
             for (addr in targetAddrs) {

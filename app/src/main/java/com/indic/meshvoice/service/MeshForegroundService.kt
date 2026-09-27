@@ -9,7 +9,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import com.indic.meshvoice.R
+import com.indic.meshvoice.IndicMeshApp
 import com.indic.meshvoice.mesh.MeshEngine
 
 class MeshForegroundService : Service() {
@@ -18,8 +18,8 @@ class MeshForegroundService : Service() {
     private val notificationId = 1001
 
     private val binder = LocalBinder()
-    var meshEngine: MeshEngine? = null
-        private set
+    val meshEngine: MeshEngine
+        get() = (application as IndicMeshApp).meshEngine
 
     inner class LocalBinder : Binder() {
         fun getService(): MeshForegroundService = this@MeshForegroundService
@@ -29,9 +29,6 @@ class MeshForegroundService : Service() {
         super.onCreate()
         createNotificationChannel()
         startForeground(notificationId, buildNotification("Active • Mesh Multi-Hop Online"))
-
-        meshEngine = MeshEngine(applicationContext)
-        meshEngine?.start()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -67,7 +64,6 @@ class MeshForegroundService : Service() {
     }
 
     override fun onDestroy() {
-        meshEngine?.stop()
         super.onDestroy()
     }
 }
