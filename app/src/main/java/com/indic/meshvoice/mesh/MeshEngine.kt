@@ -3,6 +3,7 @@ package com.indic.meshvoice.mesh
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import com.indic.meshvoice.AppLogger
 import com.indic.meshvoice.model.MeshMessage
 import com.indic.meshvoice.model.MeshNode
 import kotlinx.coroutines.CoroutineScope
@@ -10,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -40,6 +42,16 @@ class MeshEngine(
         val totalRelayed: Int = 0
     )
 
+    // Dual-Stack Mesh Transports
+    private val localSocketTransport = LocalSocketMeshTransport(
+        context = context,
+        myNodeId = myNodeId,
+        myNodeName = myNodeName,
+        onPacketReceived = { rawJson, fromEndpoint ->
+            handleIncomingPacket(rawJson, fromEndpoint)
+        }
+    )
+
     private val nearbyTransport = NearbyMeshTransport(
         context = context,
         myNodeId = myNodeId,
@@ -52,18 +64,30 @@ class MeshEngine(
     val scanStatus: StateFlow<PeerScanStatus> = nearbyTransport.scanStatus
 
     fun start() {
-        Log.i(tag, "Starting Offline Mesh Engine for Node: $myNodeId ($myNodeName)")
+        AppLogger.log(tag, "Starting Dual-Stack Mesh Engine for Node: $myNodeId ($myNodeName)")
+        localSocketTransport.start()
         nearbyTransport.startMesh()
 
+        // Combine peer lists from both transports
         scope.launch {
-            nearbyTransport.connectedEndpoints.collect { map ->
-                _activeNodes.value = map.values.toList()
+            combine(
+                localSocketTransport.connectedEndpoints,
+                nearbyTransport.connectedEndpoints
+            ) { localMap, nearbyMap ->
+                val combined = mutableMapOf<String, MeshNode>()
+                localMap.forEach { (k, v) -> combined[k] = v }
+                nearbyMap.forEach { (k, v) -> combined[v.id] = v }
+                combined.values.toList()
+            }.collect { mergedNodes ->
+                _activeNodes.value = mergedNodes
             }
         }
     }
 
     fun restartMesh() {
-        Log.i(tag, "Restarting mesh search on user demand...")
+        AppLogger.log(tag, "Restarting mesh discovery and transports...")
+        localSocketTransport.stop()
+        localSocketTransport.start()
         nearbyTransport.restartMesh()
     }
 
@@ -72,28 +96,31 @@ class MeshEngine(
 
         when (decision) {
             is MeshRouter.RouteDecision.ConsumeOnly -> {
-                Log.i(tag, "Consumed message: ${decision.message.id} (Hops: ${decision.message.hopCount})")
+                AppLogger.log(tag, "Consumed message: ${decision.message.id} (Sender: ${decision.message.senderName}, Hops: ${decision.message.hopCount})")
                 deliverMessage(decision.message)
                 updateStats(received = 1)
             }
             is MeshRouter.RouteDecision.ConsumeAndRelay -> {
-                Log.i(tag, "Consumed & Relaying message: ${decision.message.id} -> Next Hop: ${decision.nextHopMessage.hopCount}")
+                AppLogger.log(tag, "Consumed & Relaying: ${decision.message.id} -> Next Hop: ${decision.nextHopMessage.hopCount}")
                 deliverMessage(decision.message)
-                nearbyTransport.broadcastPacket(decision.nextHopMessage.toJson(), excludeEndpoint = fromEndpoint)
+                broadcastAll(decision.nextHopMessage.toJson(), excludeNearby = fromEndpoint)
                 updateStats(received = 1, relayed = 1)
             }
             is MeshRouter.RouteDecision.RelayOnly -> {
-                Log.i(tag, "Relaying message multi-hop: ${decision.nextHopMessage.id} (Hop count: ${decision.nextHopMessage.hopCount})")
-                nearbyTransport.broadcastPacket(decision.nextHopMessage.toJson(), excludeEndpoint = fromEndpoint)
+                AppLogger.log(tag, "Relaying multi-hop: ${decision.nextHopMessage.id}")
+                broadcastAll(decision.nextHopMessage.toJson(), excludeNearby = fromEndpoint)
                 updateStats(relayed = 1)
             }
-            is MeshRouter.RouteDecision.DropDuplicate -> {
-                Log.d(tag, "Dropped duplicate packet")
-            }
+            is MeshRouter.RouteDecision.DropDuplicate -> {}
             is MeshRouter.RouteDecision.DropMaxHopsExceeded -> {
                 Log.w(tag, "Dropped packet: Max hops exceeded")
             }
         }
+    }
+
+    private fun broadcastAll(rawJson: String, excludeNearby: String? = null) {
+        localSocketTransport.broadcastPacket(rawJson)
+        nearbyTransport.broadcastPacket(rawJson, excludeEndpoint = excludeNearby)
     }
 
     private fun deliverMessage(message: MeshMessage) {
@@ -105,9 +132,8 @@ class MeshEngine(
         }
     }
 
-    fun sendVoiceMessage(
+    fun sendVoiceTranscript(
         text: String,
-        audioBase64: String? = null,
         targetId: String = MeshMessage.BROADCAST_TARGET,
         langCode: String = "hi"
     ): MeshMessage {
@@ -117,13 +143,13 @@ class MeshEngine(
             targetId = targetId,
             text = text,
             languageCode = langCode,
-            audioBase64 = audioBase64,
+            audioBase64 = null,
             hopCount = 0,
             routeTrace = listOf(myNodeId)
         )
 
         router.markMessageSent(message.id)
-        nearbyTransport.broadcastPacket(message.toJson())
+        broadcastAll(message.toJson())
 
         scope.launch(Dispatchers.Main) {
             val list = _messages.value.toMutableList()
@@ -133,10 +159,6 @@ class MeshEngine(
 
         updateStats(sent = 1)
         return message
-    }
-
-    fun sendVoiceTranscript(text: String, targetId: String = MeshMessage.BROADCAST_TARGET, langCode: String = "hi"): MeshMessage {
-        return sendVoiceMessage(text = text, audioBase64 = null, targetId = targetId, langCode = langCode)
     }
 
     private fun updateStats(sent: Int = 0, received: Int = 0, relayed: Int = 0) {
@@ -149,6 +171,7 @@ class MeshEngine(
     }
 
     fun stop() {
+        localSocketTransport.stop()
         nearbyTransport.stopMesh()
     }
 }

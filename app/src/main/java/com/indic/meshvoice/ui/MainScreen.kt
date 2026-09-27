@@ -44,11 +44,6 @@ import com.indic.meshvoice.ui.components.AudioWaveform
 import com.indic.meshvoice.ui.components.NodeGraphVisualizer
 import com.indic.meshvoice.ui.theme.*
 
-enum class TransmissionMode(val label: String, val iconText: String) {
-    VOICE_AUDIO("Voice Walkie-Talkie", "🎙️ Walkie-Talkie (VAD)"),
-    SPEECH_TO_TEXT("AI4Bharat STT", "📝 AI4Bharat ASR")
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
@@ -75,64 +70,48 @@ fun MainScreen(
     val vadState by voiceAudioEngine.vad.vadState.collectAsState()
     val isVadSpeaking by voiceAudioEngine.vad.isSpeechActive.collectAsState()
 
-    var isRecordingPcm by remember { mutableStateOf(false) }
-    var txMode by remember { mutableStateOf(TransmissionMode.VOICE_AUDIO) }
-
-    val isTransmitting = if (txMode == TransmissionMode.VOICE_AUDIO) isRecordingPcm else isListeningAsr
-
     var selectedLangCode by remember { mutableStateOf("hi") }
     var selectedTargetId by remember { mutableStateOf(MeshMessage.BROADCAST_TARGET) }
     var textInput by remember { mutableStateOf("") }
     var showGraph by remember { mutableStateOf(true) }
     var showLogs by remember { mutableStateOf(false) }
 
-    // Lazy load model on language selection
+    // Pre-load language model on select
     LaunchedEffect(selectedLangCode) {
         indicAsr.ensureLanguageLoaded(selectedLangCode)
     }
 
-    // Setup VAD early-trigger and message listeners
+    // Connect VAD and STT -> Mesh -> TTS pipeline
     LaunchedEffect(Unit) {
-        // VAD Trigger for Walkie-Talkie Voice Audio
-        voiceAudioEngine.onVadEarlyTrigger = { audioBase64, durationMs ->
-            isRecordingPcm = false
-            val lang = SupportedLanguages.getByCode(selectedLangCode)
-            meshEngine.sendVoiceMessage(
-                text = lang.sampleText,
-                audioBase64 = audioBase64,
-                targetId = selectedTargetId,
-                langCode = selectedLangCode
-            )
-            mainHandler.post {
-                Toast.makeText(context, "⚡ VAD Auto-Transmitted (${durationMs}ms) to Mesh!", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        // VAD Trigger for AI4Bharat ASR Mode
+        // When VAD detects speech pause (180ms cutoff), auto-finalize ASR
         voiceAudioEngine.onVadAsrTrigger = { durationMs ->
+            AppLogger.log("MainScreen", "⚡ VAD Cutoff triggered after ${durationMs}ms of speech")
             indicAsr.finalizeFromVad(durationMs)
         }
 
-        meshEngine.onSpeechMessageReceived = { message ->
-            AppLogger.log("MainScreen", "Received message from ${message.senderName}: \"${message.text}\" (hasAudio: ${message.audioBase64 != null})")
-            if (message.audioBase64 != null) {
-                voiceAudioEngine.playPcmAudio(message.audioBase64)
-            } else if (message.text.isNotBlank()) {
-                indicTts.speak(message.text, message.languageCode)
-            }
-        }
-
-        indicAsr.onFinalResult = { transcribed, lang ->
-            if (transcribed.isNotBlank()) {
-                AppLogger.log("MainScreen", "AI4Bharat ASR transcribed: \"$transcribed\"")
+        // When ASR transcription completes -> broadcast TEXT across mesh
+        indicAsr.onFinalResult = { transcribedText, lang ->
+            if (transcribedText.isNotBlank()) {
+                AppLogger.log("MainScreen", "📡 Broadcasting ASR Transcript: \"$transcribedText\" in [$lang]")
                 meshEngine.sendVoiceTranscript(
-                    text = transcribed,
+                    text = transcribedText,
                     targetId = selectedTargetId,
                     langCode = lang
                 )
                 mainHandler.post {
                     Toast.makeText(context, "📡 Transcribed & Transmitted to Mesh!", Toast.LENGTH_SHORT).show()
                 }
+            }
+        }
+
+        // When a message is received from ANY peer -> Read it aloud using AI4Bharat IndicTTS!
+        meshEngine.onSpeechMessageReceived = { message ->
+            AppLogger.log("MainScreen", "📩 Message Received from ${message.senderName}: \"${message.text}\" [${message.languageCode}]")
+            if (message.text.isNotBlank()) {
+                mainHandler.post {
+                    Toast.makeText(context, "🔊 Speaking incoming text from ${message.senderName}", Toast.LENGTH_SHORT).show()
+                }
+                indicTts.speak(message.text, message.languageCode)
             }
         }
     }
@@ -159,7 +138,7 @@ fun MainScreen(
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    text = "AI4BHARAT QUANTIZED",
+                                    text = "AI4BHARAT STT ➔ TTS",
                                     color = NeonEmerald,
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold
@@ -199,7 +178,7 @@ fun MainScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 12.dp)
         ) {
-            // Live Stats Banner
+            // Live Telemetry Banner
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -216,7 +195,7 @@ fun MainScreen(
                 StatItem("PEERS", "${connectedNodes.size}", if (connectedNodes.isNotEmpty()) NeonEmerald else ElectricIndigo)
             }
 
-            // Language Selector Chips (10 Indic Languages - Lazy Loaded)
+            // 10 Indic Languages Selection Bar
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -230,7 +209,7 @@ fun MainScreen(
                     modifier = Modifier.padding(vertical = 2.dp)
                 )
                 Text(
-                    text = "LAZY LOADED",
+                    text = "100% OFFLINE",
                     color = CyberCyan,
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold
@@ -278,7 +257,7 @@ fun MainScreen(
 
             Spacer(Modifier.height(3.dp))
 
-            // Dynamic Mesh Topology Visualizer
+            // Dynamic Mesh Peer Graph Visualizer
             if (showGraph) {
                 NodeGraphVisualizer(
                     myNodeId = meshEngine.myNodeId,
@@ -287,7 +266,7 @@ fun MainScreen(
                     onRetryScan = {
                         meshEngine.restartMesh()
                         mainHandler.post {
-                            Toast.makeText(context, "🔄 Scanning for nearby mesh peers...", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "🔄 Re-scanning for mesh peers...", Toast.LENGTH_SHORT).show()
                         }
                     }
                 )
@@ -295,12 +274,12 @@ fun MainScreen(
 
             Spacer(Modifier.height(3.dp))
 
-            // Push-to-Talk / Transmit Section
+            // Voice Walkie-Talkie Transmit Section (Speech -> STT -> Mesh -> TTS)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(DarkSurface, RoundedCornerShape(14.dp))
-                    .border(1.dp, if (isTransmitting) CyberCyan else DarkBorder, RoundedCornerShape(14.dp))
+                    .border(1.dp, if (isListeningAsr) CyberCyan else DarkBorder, RoundedCornerShape(14.dp))
                     .padding(8.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -308,24 +287,21 @@ fun MainScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    AudioWaveform(isRecording = isTransmitting, audioLevel = pcmAudioLevel)
+                    AudioWaveform(isRecording = isListeningAsr, audioLevel = pcmAudioLevel)
 
                     Spacer(Modifier.height(3.dp))
 
                     val currentLang = SupportedLanguages.getByCode(selectedLangCode)
-                    if (isTransmitting) {
+                    if (isListeningAsr) {
                         Text(
-                            text = if (txMode == TransmissionMode.VOICE_AUDIO)
-                                (if (isVadSpeaking) "🎙️ VAD: Voice Detected! (${currentLang.displayName})" else "⚡ VAD: Auto-Cutoff on 180ms pause")
-                            else
-                                "📝 AI4Bharat ASR: Transcribing in ${currentLang.displayName}...",
+                            text = if (isVadSpeaking) "🎙️ VAD: Voice Detected in ${currentLang.displayName}!" else "⚡ VAD: Listening (Auto-Transcribes on 180ms pause)",
                             color = if (isVadSpeaking) NeonEmerald else CyberCyan,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
                     } else if (recognizedText.isNotBlank()) {
                         Text(
-                            text = "✅ AI4Bharat ASR: \"$recognizedText\"",
+                            text = "✅ Transcribed: \"$recognizedText\"",
                             color = CyberCyan,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -333,115 +309,75 @@ fun MainScreen(
                         )
                     } else {
                         Text(
-                            text = "Tap Mic to transmit in ${currentLang.displayName} (${txMode.label})",
+                            text = "Tap Mic & speak in ${currentLang.displayName} (Auto STT ➔ Transmit ➔ TTS)",
                             color = TextMuted,
                             fontSize = 11.sp
                         )
                     }
 
-                    Spacer(Modifier.height(5.dp))
+                    Spacer(Modifier.height(6.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Mode Switcher Button
-                        OutlinedButton(
-                            onClick = {
-                                txMode = if (txMode == TransmissionMode.VOICE_AUDIO)
-                                    TransmissionMode.SPEECH_TO_TEXT
-                                else
-                                    TransmissionMode.VOICE_AUDIO
-                            },
-                            shape = RoundedCornerShape(18.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberCyan),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Text(txMode.iconText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        Spacer(Modifier.width(14.dp))
-
-                        // Walkie-Talkie Push-to-Talk Mic Button
+                        // Big Walkie-Talkie Mic Button (VAD + AI4Bharat STT)
                         Box(
                             modifier = Modifier
-                                .size(54.dp)
+                                .size(56.dp)
                                 .clip(CircleShape)
                                 .background(
                                     Brush.radialGradient(
-                                        colors = if (isTransmitting) listOf(CrimsonAlert, SaffronOrange) else listOf(CyberCyan, ElectricIndigo)
+                                        colors = if (isListeningAsr) listOf(CrimsonAlert, SaffronOrange) else listOf(CyberCyan, ElectricIndigo)
                                     )
                                 )
                                 .clickable {
-                                    if (txMode == TransmissionMode.VOICE_AUDIO) {
-                                        if (isRecordingPcm) {
-                                            isRecordingPcm = false
-                                            val audioBase64 = voiceAudioEngine.stopRecording()
-                                            if (audioBase64 != null) {
-                                                meshEngine.sendVoiceMessage(
-                                                    text = currentLang.sampleText,
-                                                    audioBase64 = audioBase64,
-                                                    targetId = selectedTargetId,
-                                                    langCode = selectedLangCode
-                                                )
-                                                mainHandler.post {
-                                                    Toast.makeText(context, "📡 Voice transmitted across mesh!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                        } else {
-                                            val started = voiceAudioEngine.startRecording(asrMode = false)
-                                            if (started) isRecordingPcm = true
-                                        }
+                                    if (isListeningAsr) {
+                                        voiceAudioEngine.stopRecording()
+                                        indicAsr.stopListening()
                                     } else {
-                                        // AI4Bharat ASR Mode with VAD
-                                        if (isListeningAsr) {
-                                            voiceAudioEngine.stopRecording()
-                                            indicAsr.stopListening()
-                                        } else {
-                                            indicAsr.startListening(selectedLangCode)
-                                            voiceAudioEngine.startRecording(asrMode = true)
-                                        }
+                                        indicAsr.startListening(selectedLangCode)
+                                        voiceAudioEngine.startRecording(asrMode = true)
                                     }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (isTransmitting) Icons.Default.Stop else Icons.Default.Mic,
-                                contentDescription = "Toggle Recording",
-                                tint = if (isTransmitting) Color.White else DarkBg,
-                                modifier = Modifier.size(26.dp)
+                                imageVector = if (isListeningAsr) Icons.Default.Stop else Icons.Default.Mic,
+                                contentDescription = "Toggle Speech Recognition",
+                                tint = if (isListeningAsr) Color.White else DarkBg,
+                                modifier = Modifier.size(28.dp)
                             )
                         }
 
-                        Spacer(Modifier.width(14.dp))
+                        Spacer(Modifier.width(16.dp))
 
-                        // 🔊 Test AI4Bharat IndicTTS Button
+                        // 🔊 Test Local AI4Bharat IndicTTS Button
                         IconButton(
                             onClick = {
                                 indicTts.speak(currentLang.sampleText, currentLang.code)
                                 mainHandler.post {
-                                    Toast.makeText(context, "🔊 Synthesizing ${currentLang.displayName} (AI4Bharat TTS)", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "🔊 Synthesizing in ${currentLang.displayName} (AI4Bharat TTS)", Toast.LENGTH_SHORT).show()
                                 }
                             },
                             modifier = Modifier
                                 .clip(CircleShape)
                                 .background(DarkBorder)
-                                .size(32.dp)
+                                .size(34.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                                 contentDescription = "Test AI4Bharat TTS",
                                 tint = CyberCyan,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
 
                     Spacer(Modifier.height(6.dp))
 
-                    // Quick Text Input Fallback / Direct Send
+                    // Text Input & Send
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -493,7 +429,7 @@ fun MainScreen(
 
             Spacer(Modifier.height(3.dp))
 
-            // Expandable Live Logs Console OR Live Transcripts
+            // Expandable Logs OR Live Transcripts Feed
             if (showLogs) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF070B14)),
@@ -566,7 +502,7 @@ fun MainScreen(
                 }
             } else {
                 Text(
-                    text = "LIVE MESH TRANSCRIPTS & PACKET FEED",
+                    text = "LIVE MESH TRANSCRIPTS (AUTOPLAY VIA INDIC TTS)",
                     color = TextMuted,
                     fontSize = 9.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -588,7 +524,7 @@ fun MainScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "No messages yet. Speak or type to transmit over mesh.",
+                                    text = "No messages yet. Speak into mic to transcribe & transmit over mesh.",
                                     color = TextMuted,
                                     fontSize = 10.sp
                                 )
@@ -602,13 +538,6 @@ fun MainScreen(
                             isFromMe = msg.senderId == meshEngine.myNodeId,
                             onPlayTts = {
                                 indicTts.speak(msg.text, msg.languageCode)
-                            },
-                            onPlayVoice = {
-                                if (msg.audioBase64 != null) {
-                                    voiceAudioEngine.playPcmAudio(msg.audioBase64)
-                                } else {
-                                    indicTts.speak(msg.text, msg.languageCode)
-                                }
                             }
                         )
                     }
@@ -630,8 +559,7 @@ private fun StatItem(label: String, value: String, color: Color) {
 private fun MessageCard(
     message: MeshMessage,
     isFromMe: Boolean,
-    onPlayTts: () -> Unit,
-    onPlayVoice: () -> Unit
+    onPlayTts: () -> Unit
 ) {
     val lang = SupportedLanguages.getByCode(message.languageCode)
 
@@ -707,32 +635,16 @@ private fun MessageCard(
                     fontSize = 8.sp
                 )
 
-                Row {
-                    if (message.audioBase64 != null) {
-                        IconButton(
-                            onClick = onPlayVoice,
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Play original voice audio",
-                                tint = NeonEmerald,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                        Spacer(Modifier.width(2.dp))
-                    }
-                    IconButton(
-                        onClick = onPlayTts,
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = "Speak using AI4Bharat TTS",
-                            tint = CyberCyan,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
+                IconButton(
+                    onClick = onPlayTts,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = "Speak using AI4Bharat TTS",
+                        tint = CyberCyan,
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
             }
         }
