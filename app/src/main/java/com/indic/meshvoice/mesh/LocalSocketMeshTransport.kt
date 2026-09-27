@@ -2,7 +2,6 @@ package com.indic.meshvoice.mesh
 
 import android.content.Context
 import android.net.wifi.WifiManager
-import android.util.Log
 import com.indic.meshvoice.AppLogger
 import com.indic.meshvoice.model.MeshNode
 import com.indic.meshvoice.model.TransportType
@@ -14,14 +13,15 @@ import org.json.JSONObject
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Ultra-Fast Direct UDP Subnet Mesh Transport.
  * Features:
- *  - Sub-50ms peer discovery over local Wi-Fi / Hotspot / Ad-Hoc networks.
+ *  - Instant sub-50ms peer discovery over local Wi-Fi / Hotspot / Ad-Hoc networks.
+ *  - MulticastLock acquisition for Android Wi-Fi driver packet passing.
  *  - Zero handshake delay.
- *  - Broadcasts heartbeats and message packets across all subnet nodes.
  */
 class LocalSocketMeshTransport(
     private val context: Context,
@@ -35,6 +35,7 @@ class LocalSocketMeshTransport(
 
     private var socket: DatagramSocket? = null
     private var isRunning = false
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     private val activePeers = ConcurrentHashMap<String, MeshNode>()
     private val peerLastSeen = ConcurrentHashMap<String, Long>()
@@ -42,19 +43,20 @@ class LocalSocketMeshTransport(
     private val _connectedEndpoints = MutableStateFlow<Map<String, MeshNode>>(emptyMap())
     val connectedEndpoints: StateFlow<Map<String, MeshNode>> = _connectedEndpoints.asStateFlow()
 
-    private var broadcastAddress: InetAddress? = null
-
     fun start() {
         if (isRunning) return
         isRunning = true
+
+        acquireMulticastLock()
+
         scope.launch {
             try {
-                broadcastAddress = getBroadcastAddress()
-                socket = DatagramSocket(port).apply {
-                    broadcast = true
+                socket = DatagramSocket(null).apply {
                     reuseAddress = true
+                    broadcast = true
+                    bind(InetSocketAddress(port))
                 }
-                AppLogger.log(tag, "⚡ Ultra-Fast Local UDP Mesh Socket online on port $port (Bcast: $broadcastAddress)")
+                AppLogger.log(tag, "⚡ Ultra-Fast Local UDP Mesh Socket online on port $port")
 
                 // Launch receiver loop
                 launch { listenLoop() }
@@ -67,8 +69,21 @@ class LocalSocketMeshTransport(
         }
     }
 
+    private fun acquireMulticastLock() {
+        try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            multicastLock = wifi?.createMulticastLock("indic_mesh_multicast_lock")?.apply {
+                setReferenceCounted(true)
+                acquire()
+            }
+            AppLogger.log(tag, "Wi-Fi MulticastLock acquired successfully")
+        } catch (e: Exception) {
+            AppLogger.log(tag, "MulticastLock note: ${e.message}")
+        }
+    }
+
     private suspend fun listenLoop() {
-        val buffer = ByteArray(4096)
+        val buffer = ByteArray(8192)
         while (isRunning && socket != null && !socket!!.isClosed) {
             try {
                 val packet = DatagramPacket(buffer, buffer.size)
@@ -118,14 +133,13 @@ class LocalSocketMeshTransport(
                 }
             }
         } catch (e: Exception) {
-            // Not a JSON packet, ignore
+            // Non-json packet, ignore
         }
     }
 
     private suspend fun heartbeatLoop() {
         while (isRunning) {
             try {
-                // Send discovery beacon
                 val beacon = JSONObject().apply {
                     put("type", "BEACON")
                     put("nodeId", myNodeId)
@@ -134,7 +148,7 @@ class LocalSocketMeshTransport(
 
                 sendRawBroadcast(beacon)
 
-                // Prune expired peers (> 6s silence)
+                // Prune inactive peers (> 6s silence)
                 val now = System.currentTimeMillis()
                 val iterator = peerLastSeen.entries.iterator()
                 var changed = false
@@ -173,19 +187,23 @@ class LocalSocketMeshTransport(
     private fun sendRawBroadcast(data: String) {
         try {
             val bytes = data.toByteArray()
-            val targetAddr = broadcastAddress ?: InetAddress.getByName("255.255.255.255")
-            val packet = DatagramPacket(bytes, bytes.size, targetAddr, port)
-            socket?.send(packet)
-        } catch (e: Exception) {
-            try {
-                val bytes = data.toByteArray()
-                val fallback = DatagramPacket(bytes, bytes.size, InetAddress.getByName("255.255.255.255"), port)
-                socket?.send(fallback)
-            } catch (e2: Exception) {}
-        }
+            val targetAddrs = listOfNotNull(
+                getBroadcastAddress(),
+                InetAddress.getByName("255.255.255.255"),
+                InetAddress.getByName("192.168.43.255"), // Standard Android Hotspot Subnet Broadcast
+                InetAddress.getByName("192.168.49.255")  // Standard Wi-Fi Direct Subnet Broadcast
+            ).distinct()
+
+            for (addr in targetAddrs) {
+                try {
+                    val packet = DatagramPacket(bytes, bytes.size, addr, port)
+                    socket?.send(packet)
+                } catch (e: Exception) {}
+            }
+        } catch (e: Exception) {}
     }
 
-    private fun getBroadcastAddress(): InetAddress {
+    private fun getBroadcastAddress(): InetAddress? {
         try {
             val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             val dhcp = wifi?.dhcpInfo
@@ -196,7 +214,7 @@ class LocalSocketMeshTransport(
                 return InetAddress.getByAddress(quads)
             }
         } catch (e: Exception) {}
-        return InetAddress.getByName("255.255.255.255")
+        return null
     }
 
     fun stop() {
@@ -205,6 +223,14 @@ class LocalSocketMeshTransport(
             socket?.close()
         } catch (e: Exception) {}
         socket = null
+
+        try {
+            if (multicastLock?.isHeld == true) {
+                multicastLock?.release()
+            }
+        } catch (e: Exception) {}
+        multicastLock = null
+
         activePeers.clear()
         peerLastSeen.clear()
         _connectedEndpoints.value = emptyMap()
