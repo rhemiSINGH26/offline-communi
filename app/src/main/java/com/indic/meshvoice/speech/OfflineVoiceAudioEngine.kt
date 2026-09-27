@@ -17,6 +17,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 
+/**
+ * Ultra-low latency 16kHz PCM Voice Audio Engine with VAD Gatekeeper.
+ * Compatible with low-RAM devices (1.5GB RAM safe, <320KB audio buffer cap).
+ */
 class OfflineVoiceAudioEngine(private val context: Context) {
 
     private val tag = "VoiceAudioEngine"
@@ -30,31 +34,39 @@ class OfflineVoiceAudioEngine(private val context: Context) {
     private var isRecording = false
     private val audioBufferStream = ByteArrayOutputStream()
 
-    val vad = VoiceActivityDetector(sampleRate = sampleRate)
+    val vad = VoiceActivityDetector(sampleRate = sampleRate, silenceThresholdMs = 180L)
 
     private val _rmsLevel = MutableStateFlow(0f)
     val rmsLevel: StateFlow<Float> = _rmsLevel.asStateFlow()
 
     var onVadEarlyTrigger: ((audioBase64: String, durationMs: Long) -> Unit)? = null
+    var onVadAsrTrigger: ((durationMs: Long) -> Unit)? = null
+    var isAsrMode: Boolean = false
 
     init {
         vad.onSpeechFinalized = { durationMs ->
             if (isRecording) {
-                AppLogger.log(tag, "VAD triggered early auto-stop after ${durationMs}ms of speech")
-                val base64 = stopRecording()
-                if (base64 != null) {
-                    onVadEarlyTrigger?.invoke(base64, durationMs)
+                AppLogger.log(tag, "⚡ VAD Cutoff triggered (180ms silence). Finalizing after ${durationMs}ms of speech")
+                if (isAsrMode) {
+                    stopRecordingInternal()
+                    onVadAsrTrigger?.invoke(durationMs)
+                } else {
+                    val base64 = stopRecording()
+                    if (base64 != null) {
+                        onVadEarlyTrigger?.invoke(base64, durationMs)
+                    }
                 }
             }
         }
     }
 
     @SuppressLint("MissingPermission")
-    fun startRecording(): Boolean {
+    fun startRecording(asrMode: Boolean = false): Boolean {
         if (isRecording) {
             AppLogger.log(tag, "Already recording voice audio")
             return true
         }
+        isAsrMode = asrMode
 
         try {
             audioBufferStream.reset()
@@ -69,7 +81,7 @@ class OfflineVoiceAudioEngine(private val context: Context) {
             )
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                AppLogger.log(tag, "AudioRecord initialization failed (Check microphone permission)")
+                AppLogger.log(tag, "AudioRecord initialization failed (Check mic permission)")
                 audioRecord?.release()
                 audioRecord = null
                 return false
@@ -77,7 +89,7 @@ class OfflineVoiceAudioEngine(private val context: Context) {
 
             audioRecord?.startRecording()
             isRecording = true
-            AppLogger.log(tag, "Direct 16kHz PCM Voice Recording started with VAD Gatekeeper")
+            AppLogger.log(tag, "🎙️ Direct 16kHz PCM Voice Recording started with VAD Gatekeeper (Mode: ${if (asrMode) "ASR" else "Walkie-Talkie"})")
 
             CoroutineScope(Dispatchers.IO).launch {
                 val buffer = ByteArray(bufferSize)
@@ -85,22 +97,26 @@ class OfflineVoiceAudioEngine(private val context: Context) {
                     try {
                         val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                         if (read > 0) {
-                            // Low-RAM guard: Cap max audio stream to 10s (~312KB)
                             if (audioBufferStream.size() < maxAudioBytes) {
                                 audioBufferStream.write(buffer, 0, read)
                             } else {
                                 AppLogger.log(tag, "Max audio limit reached (10s). Auto-finalizing...")
-                                val base64 = stopRecording()
-                                if (base64 != null) {
-                                    onVadEarlyTrigger?.invoke(base64, 10000L)
+                                if (isAsrMode) {
+                                    stopRecordingInternal()
+                                    onVadAsrTrigger?.invoke(10000L)
+                                } else {
+                                    val base64 = stopRecording()
+                                    if (base64 != null) {
+                                        onVadEarlyTrigger?.invoke(base64, 10000L)
+                                    }
                                 }
                                 break
                             }
 
-                            // Process frame through Voice Activity Detector (VAD)
+                            // Process through VAD
                             vad.processPcmFrame(buffer, read)
 
-                            // Safe RMS calculation
+                            // RMS calculation
                             var sum = 0.0
                             val limit = read - 1
                             var sampleCount = 0
@@ -128,7 +144,7 @@ class OfflineVoiceAudioEngine(private val context: Context) {
         }
     }
 
-    fun stopRecording(): String? {
+    private fun stopRecordingInternal() {
         isRecording = false
         try {
             audioRecord?.stop()
@@ -136,15 +152,18 @@ class OfflineVoiceAudioEngine(private val context: Context) {
             audioRecord = null
             _rmsLevel.value = 0f
             vad.reset()
-
-            val pcmBytes = audioBufferStream.toByteArray()
-            AppLogger.log(tag, "Voice recording stopped. Captured ${pcmBytes.size} bytes (${pcmBytes.size / 32000.0}s)")
-
-            if (pcmBytes.isNotEmpty()) {
-                return Base64.encodeToString(pcmBytes, Base64.NO_WRAP)
-            }
         } catch (e: Exception) {
-            AppLogger.log(tag, "stopRecording exception: ${e.message}")
+            AppLogger.log(tag, "stopRecordingInternal exception: ${e.message}")
+        }
+    }
+
+    fun stopRecording(): String? {
+        stopRecordingInternal()
+        val pcmBytes = audioBufferStream.toByteArray()
+        AppLogger.log(tag, "Voice recording stopped. Captured ${pcmBytes.size} bytes (${pcmBytes.size / 32000.0}s)")
+
+        if (pcmBytes.isNotEmpty()) {
+            return Base64.encodeToString(pcmBytes, Base64.NO_WRAP)
         }
         return null
     }
@@ -154,7 +173,7 @@ class OfflineVoiceAudioEngine(private val context: Context) {
             var audioTrack: AudioTrack? = null
             try {
                 val pcmBytes = Base64.decode(base64Audio, Base64.NO_WRAP)
-                AppLogger.log(tag, "Playing received 16kHz PCM voice audio (${pcmBytes.size} bytes)...")
+                AppLogger.log(tag, "▶️ Playing received 16kHz PCM voice audio (${pcmBytes.size} bytes)...")
 
                 val trackBufferSize = AudioTrack.getMinBufferSize(
                     sampleRate,
@@ -184,10 +203,9 @@ class OfflineVoiceAudioEngine(private val context: Context) {
                 audioTrack.play()
                 audioTrack.write(pcmBytes, 0, pcmBytes.size)
 
-                // Wait for playback to complete
                 val playbackDurationMs = (pcmBytes.size / 32.0).toLong()
                 Thread.sleep(playbackDurationMs + 80)
-                AppLogger.log(tag, "PCM Voice playback completed successfully")
+                AppLogger.log(tag, "✅ PCM Voice playback completed successfully")
             } catch (e: Exception) {
                 AppLogger.log(tag, "playPcmAudio exception: ${e.message}")
             } finally {

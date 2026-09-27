@@ -20,8 +20,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.indic.meshvoice.mesh.MeshEngine
 import com.indic.meshvoice.service.MeshForegroundService
-import com.indic.meshvoice.speech.OfflineSpeechRecognizer
-import com.indic.meshvoice.speech.OfflineTextToSpeech
+import com.indic.meshvoice.speech.Ai4BharatIndicASR
+import com.indic.meshvoice.speech.Ai4BharatIndicTTS
 import com.indic.meshvoice.speech.OfflineVoiceAudioEngine
 import com.indic.meshvoice.ui.MainScreen
 import com.indic.meshvoice.ui.theme.IndicMeshVoiceTheme
@@ -29,8 +29,8 @@ import com.indic.meshvoice.ui.theme.IndicMeshVoiceTheme
 class MainActivity : ComponentActivity() {
 
     private lateinit var meshEngine: MeshEngine
-    private lateinit var speechRecognizer: OfflineSpeechRecognizer
-    private lateinit var textToSpeech: OfflineTextToSpeech
+    private lateinit var indicAsr: Ai4BharatIndicASR
+    private lateinit var indicTts: Ai4BharatIndicTTS
     private lateinit var voiceAudioEngine: OfflineVoiceAudioEngine
 
     private var meshService: MeshForegroundService? = null
@@ -75,8 +75,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         meshEngine = MeshEngine(this)
-        speechRecognizer = OfflineSpeechRecognizer(this).apply { init() }
-        textToSpeech = OfflineTextToSpeech(this).apply { init() }
+        indicAsr = Ai4BharatIndicASR(this).apply { init() }
+        indicTts = Ai4BharatIndicTTS(this).apply { init() }
         voiceAudioEngine = OfflineVoiceAudioEngine(this)
 
         checkAndRequestPermissions()
@@ -85,8 +85,8 @@ class MainActivity : ComponentActivity() {
             IndicMeshVoiceTheme {
                 MainScreen(
                     meshEngine = meshEngine,
-                    speechRecognizer = speechRecognizer,
-                    textToSpeech = textToSpeech,
+                    indicAsr = indicAsr,
+                    indicTts = indicTts,
                     voiceAudioEngine = voiceAudioEngine
                 )
             }
@@ -172,8 +172,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        speechRecognizer.destroy()
-        textToSpeech.destroy()
+        indicAsr.destroy()
+        indicTts.destroy()
         if (isServiceBound) {
             unbindService(serviceConnection)
             isServiceBound = false

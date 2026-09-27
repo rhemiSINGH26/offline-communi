@@ -33,27 +33,28 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import com.indic.meshvoice.AppLogger
 import com.indic.meshvoice.mesh.MeshEngine
 import com.indic.meshvoice.model.MeshMessage
 import com.indic.meshvoice.model.SupportedLanguages
-import com.indic.meshvoice.speech.*
+import com.indic.meshvoice.speech.Ai4BharatIndicASR
+import com.indic.meshvoice.speech.Ai4BharatIndicTTS
+import com.indic.meshvoice.speech.OfflineVoiceAudioEngine
 import com.indic.meshvoice.ui.components.AudioWaveform
 import com.indic.meshvoice.ui.components.NodeGraphVisualizer
 import com.indic.meshvoice.ui.theme.*
 
 enum class TransmissionMode(val label: String, val iconText: String) {
-    VOICE_AUDIO("Voice Walkie-Talkie", "🎙️ Audio (VAD)"),
-    SPEECH_TO_TEXT("Speech-To-Text", "📝 ASR (Our Model)")
+    VOICE_AUDIO("Voice Walkie-Talkie", "🎙️ Walkie-Talkie (VAD)"),
+    SPEECH_TO_TEXT("AI4Bharat STT", "📝 AI4Bharat ASR")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     meshEngine: MeshEngine,
-    speechRecognizer: OfflineSpeechRecognizer,
-    textToSpeech: OfflineTextToSpeech,
+    indicAsr: Ai4BharatIndicASR,
+    indicTts: Ai4BharatIndicTTS,
     voiceAudioEngine: OfflineVoiceAudioEngine
 ) {
     val context = LocalContext.current
@@ -66,12 +67,10 @@ fun MainScreen(
 
     val scanStatus by meshEngine.scanStatus.collectAsState()
 
-    val isListeningStt by speechRecognizer.isListening.collectAsState()
-    val recognizedText by speechRecognizer.recognizedText.collectAsState()
-    val sttAudioLevel by speechRecognizer.rmsAudioLevel.collectAsState()
+    val isListeningAsr by indicAsr.isListening.collectAsState()
+    val recognizedText by indicAsr.recognizedText.collectAsState()
+    val liveRtf by indicAsr.liveRtf.collectAsState()
     val pcmAudioLevel by voiceAudioEngine.rmsLevel.collectAsState()
-    val liveRtf by speechRecognizer.liveRtf.collectAsState()
-    val lastProcTime by speechRecognizer.lastProcessingMs.collectAsState()
 
     val vadState by voiceAudioEngine.vad.vadState.collectAsState()
     val isVadSpeaking by voiceAudioEngine.vad.isSpeechActive.collectAsState()
@@ -79,20 +78,22 @@ fun MainScreen(
     var isRecordingPcm by remember { mutableStateOf(false) }
     var txMode by remember { mutableStateOf(TransmissionMode.VOICE_AUDIO) }
 
-    val isTransmitting = if (txMode == TransmissionMode.VOICE_AUDIO) isRecordingPcm else isListeningStt
-    val liveAudioLevel = if (txMode == TransmissionMode.VOICE_AUDIO) pcmAudioLevel else sttAudioLevel
+    val isTransmitting = if (txMode == TransmissionMode.VOICE_AUDIO) isRecordingPcm else isListeningAsr
 
     var selectedLangCode by remember { mutableStateOf("hi") }
     var selectedTargetId by remember { mutableStateOf(MeshMessage.BROADCAST_TARGET) }
     var textInput by remember { mutableStateOf("") }
     var showGraph by remember { mutableStateOf(true) }
     var showLogs by remember { mutableStateOf(false) }
-    var showDiagnosticsDialog by remember { mutableStateOf(false) }
 
-    val languageStatus by textToSpeech.readinessManager.languageStatus.collectAsState()
+    // Lazy load model on language selection
+    LaunchedEffect(selectedLangCode) {
+        indicAsr.ensureLanguageLoaded(selectedLangCode)
+    }
 
     // Setup VAD early-trigger and message listeners
     LaunchedEffect(Unit) {
+        // VAD Trigger for Walkie-Talkie Voice Audio
         voiceAudioEngine.onVadEarlyTrigger = { audioBase64, durationMs ->
             isRecordingPcm = false
             val lang = SupportedLanguages.getByCode(selectedLangCode)
@@ -103,8 +104,13 @@ fun MainScreen(
                 langCode = selectedLangCode
             )
             mainHandler.post {
-                Toast.makeText(context, "⚡ VAD Auto-Transmitted (${durationMs}ms) across Mesh!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "⚡ VAD Auto-Transmitted (${durationMs}ms) to Mesh!", Toast.LENGTH_SHORT).show()
             }
+        }
+
+        // VAD Trigger for AI4Bharat ASR Mode
+        voiceAudioEngine.onVadAsrTrigger = { durationMs ->
+            indicAsr.finalizeFromVad(durationMs)
         }
 
         meshEngine.onSpeechMessageReceived = { message ->
@@ -112,20 +118,20 @@ fun MainScreen(
             if (message.audioBase64 != null) {
                 voiceAudioEngine.playPcmAudio(message.audioBase64)
             } else if (message.text.isNotBlank()) {
-                textToSpeech.speak(message.text, message.languageCode)
+                indicTts.speak(message.text, message.languageCode)
             }
         }
 
-        speechRecognizer.onFinalResult = { transcribed, lang ->
+        indicAsr.onFinalResult = { transcribed, lang ->
             if (transcribed.isNotBlank()) {
-                AppLogger.log("MainScreen", "STT transcribed: \"$transcribed\"")
+                AppLogger.log("MainScreen", "AI4Bharat ASR transcribed: \"$transcribed\"")
                 meshEngine.sendVoiceTranscript(
                     text = transcribed,
                     targetId = selectedTargetId,
                     langCode = lang
                 )
                 mainHandler.post {
-                    Toast.makeText(context, "📡 Transcribed & Transmitted across Mesh!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "📡 Transcribed & Transmitted to Mesh!", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -153,7 +159,7 @@ fun MainScreen(
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    text = "100% OFFLINE",
+                                    text = "AI4BHARAT QUANTIZED",
                                     color = NeonEmerald,
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold
@@ -161,7 +167,7 @@ fun MainScreen(
                             }
                         }
                         Text(
-                            text = "Node: ${meshEngine.myNodeId} • Peers: ${connectedNodes.size} • Engine: OUR MODEL",
+                            text = "Node: ${meshEngine.myNodeId} • Peers: ${connectedNodes.size} • 100% Offline",
                             color = if (connectedNodes.isNotEmpty()) NeonEmerald else CyberCyan,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Normal
@@ -169,13 +175,6 @@ fun MainScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showDiagnosticsDialog = true }) {
-                        Icon(
-                            imageVector = Icons.Default.Language,
-                            contentDescription = "Language & Model Studio",
-                            tint = CyberCyan
-                        )
-                    }
                     IconButton(onClick = { showLogs = !showLogs }) {
                         Icon(
                             imageVector = Icons.Default.BugReport,
@@ -200,7 +199,7 @@ fun MainScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 12.dp)
         ) {
-            // Responsive Stats Banner
+            // Live Stats Banner
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -213,27 +212,26 @@ fun MainScreen(
                 StatItem("SENT", "${packetStats.totalSent}", CyberCyan)
                 StatItem("RECEIVED", "${packetStats.totalReceived}", NeonEmerald)
                 StatItem("RTF", String.format("%.2f", liveRtf), SaffronOrange)
-                StatItem("VAD", if (isVadSpeaking) "ACTIVE" else "180ms", if (isVadSpeaking) NeonEmerald else TextSecondary)
+                StatItem("VAD", if (isVadSpeaking) "SPEAKING" else "180ms", if (isVadSpeaking) NeonEmerald else TextSecondary)
                 StatItem("PEERS", "${connectedNodes.size}", if (connectedNodes.isNotEmpty()) NeonEmerald else ElectricIndigo)
             }
 
-            // Language Selector Chips (10 Indic Languages)
+            // Language Selector Chips (10 Indic Languages - Lazy Loaded)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "SELECT LANGUAGE:",
+                    text = "SELECT LANGUAGE (10 INDIC LANGUAGES):",
                     color = TextMuted,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(vertical = 2.dp)
                 )
-                val currentDiag = languageStatus[selectedLangCode]
                 Text(
-                    text = currentDiag?.selectedTier?.badge ?: "OUR MODEL (ACTIVE)",
-                    color = NeonEmerald,
+                    text = "LAZY LOADED",
+                    color = CyberCyan,
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -257,6 +255,7 @@ fun MainScreen(
                             .clickable {
                                 selectedLangCode = lang.code
                                 textInput = lang.sampleText
+                                indicAsr.ensureLanguageLoaded(lang.code)
                             }
                             .padding(horizontal = 10.dp, vertical = 5.dp)
                     ) {
@@ -279,7 +278,7 @@ fun MainScreen(
 
             Spacer(Modifier.height(3.dp))
 
-            // Dynamic Visualizer Section (Adaptive for tablets and all phones)
+            // Dynamic Mesh Topology Visualizer
             if (showGraph) {
                 NodeGraphVisualizer(
                     myNodeId = meshEngine.myNodeId,
@@ -288,7 +287,7 @@ fun MainScreen(
                     onRetryScan = {
                         meshEngine.restartMesh()
                         mainHandler.post {
-                            Toast.makeText(context, "🔄 Re-scanning for nearby mesh peers...", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "🔄 Scanning for nearby mesh peers...", Toast.LENGTH_SHORT).show()
                         }
                     }
                 )
@@ -309,7 +308,7 @@ fun MainScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    AudioWaveform(isRecording = isTransmitting, audioLevel = liveAudioLevel)
+                    AudioWaveform(isRecording = isTransmitting, audioLevel = pcmAudioLevel)
 
                     Spacer(Modifier.height(3.dp))
 
@@ -317,16 +316,16 @@ fun MainScreen(
                     if (isTransmitting) {
                         Text(
                             text = if (txMode == TransmissionMode.VOICE_AUDIO)
-                                (if (isVadSpeaking) "🎙️ VAD: Voice Detected! (${currentLang.displayName})" else "⚡ VAD: Listening (Auto-Cutoff on 180ms pause)")
+                                (if (isVadSpeaking) "🎙️ VAD: Voice Detected! (${currentLang.displayName})" else "⚡ VAD: Auto-Cutoff on 180ms pause")
                             else
-                                "📝 Transcribing in ${currentLang.displayName} (Our Offline Model)...",
+                                "📝 AI4Bharat ASR: Transcribing in ${currentLang.displayName}...",
                             color = if (isVadSpeaking) NeonEmerald else CyberCyan,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
                     } else if (recognizedText.isNotBlank()) {
                         Text(
-                            text = "✅ Transcribed: \"$recognizedText\"",
+                            text = "✅ AI4Bharat ASR: \"$recognizedText\"",
                             color = CyberCyan,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -365,7 +364,7 @@ fun MainScreen(
 
                         Spacer(Modifier.width(14.dp))
 
-                        // Safe Unified Mic Button (Exclusive Audio Capture + VAD)
+                        // Walkie-Talkie Push-to-Talk Mic Button
                         Box(
                             modifier = Modifier
                                 .size(54.dp)
@@ -392,15 +391,17 @@ fun MainScreen(
                                                 }
                                             }
                                         } else {
-                                            val started = voiceAudioEngine.startRecording()
+                                            val started = voiceAudioEngine.startRecording(asrMode = false)
                                             if (started) isRecordingPcm = true
                                         }
                                     } else {
-                                        // STT Mode (Our Model)
-                                        if (isListeningStt) {
-                                            speechRecognizer.stopListening()
+                                        // AI4Bharat ASR Mode with VAD
+                                        if (isListeningAsr) {
+                                            voiceAudioEngine.stopRecording()
+                                            indicAsr.stopListening()
                                         } else {
-                                            speechRecognizer.startListening(selectedLangCode)
+                                            indicAsr.startListening(selectedLangCode)
+                                            voiceAudioEngine.startRecording(asrMode = true)
                                         }
                                     }
                                 },
@@ -416,12 +417,12 @@ fun MainScreen(
 
                         Spacer(Modifier.width(14.dp))
 
-                        // 🔊 Test Local TTS Button
+                        // 🔊 Test AI4Bharat IndicTTS Button
                         IconButton(
                             onClick = {
-                                textToSpeech.speak(currentLang.sampleText, currentLang.code)
+                                indicTts.speak(currentLang.sampleText, currentLang.code)
                                 mainHandler.post {
-                                    Toast.makeText(context, "🔊 Synthesizing in ${currentLang.displayName}", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "🔊 Synthesizing ${currentLang.displayName} (AI4Bharat TTS)", Toast.LENGTH_SHORT).show()
                                 }
                             },
                             modifier = Modifier
@@ -431,7 +432,7 @@ fun MainScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                                contentDescription = "Test Local TTS",
+                                contentDescription = "Test AI4Bharat TTS",
                                 tint = CyberCyan,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -509,14 +510,14 @@ fun MainScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "🐞 LIVE ENGINE & SPEECH LOGS",
+                                text = "🐞 LIVE AI4BHARAT ENGINE LOGS",
                                 color = SaffronOrange,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Row {
                                 TextButton(
-                                    onClick = { textToSpeech.speak("Testing our offline speech synthesis", "en") },
+                                    onClick = { indicTts.speak("Testing AI4Bharat offline speech synthesis", "en") },
                                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 1.dp)
                                 ) {
                                     Text("🔊 Test", color = CyberCyan, fontSize = 9.sp)
@@ -553,7 +554,7 @@ fun MainScreen(
                             items(logs) { log ->
                                 Text(
                                     text = log,
-                                    color = if (log.contains("Error", true)) CrimsonAlert else if (log.contains("STT", true) || log.contains("VAD", true)) CyberCyan else if (log.contains("TTS", true) || log.contains("Model", true)) SaffronOrange else TextSecondary,
+                                    color = if (log.contains("Error", true)) CrimsonAlert else if (log.contains("ASR", true) || log.contains("VAD", true)) CyberCyan else if (log.contains("TTS", true) || log.contains("Model", true)) SaffronOrange else TextSecondary,
                                     fontSize = 9.sp,
                                     fontFamily = FontFamily.Monospace,
                                     lineHeight = 12.sp,
@@ -600,156 +601,16 @@ fun MainScreen(
                             message = msg,
                             isFromMe = msg.senderId == meshEngine.myNodeId,
                             onPlayTts = {
-                                textToSpeech.speak(msg.text, msg.languageCode)
+                                indicTts.speak(msg.text, msg.languageCode)
                             },
                             onPlayVoice = {
                                 if (msg.audioBase64 != null) {
                                     voiceAudioEngine.playPcmAudio(msg.audioBase64)
                                 } else {
-                                    textToSpeech.speak(msg.text, msg.languageCode)
+                                    indicTts.speak(msg.text, msg.languageCode)
                                 }
                             }
                         )
-                    }
-                }
-            }
-        }
-    }
-
-    // 🌐 Model & Language Studio Dialog
-    if (showDiagnosticsDialog) {
-        Dialog(onDismissRequest = { showDiagnosticsDialog = false }) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.85f)
-                    .border(1.dp, CyberCyan.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "STT & TTS Model Studio",
-                                color = TextPrimary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
-                            )
-                            Text(
-                                text = "Default: Our Embedded Model • Manual Override",
-                                color = NeonEmerald,
-                                fontSize = 10.sp
-                            )
-                        }
-                        IconButton(onClick = { showDiagnosticsDialog = false }) {
-                            Icon(Icons.Default.Close, contentDescription = "Close", tint = TextSecondary)
-                        }
-                    }
-
-                    HorizontalDivider(color = DarkBorder, modifier = Modifier.padding(vertical = 6.dp))
-
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        items(SupportedLanguages.ALL) { lang ->
-                            val diag = languageStatus[lang.code]
-                            val selectedTier = diag?.selectedTier ?: TtsTier.TIER_2_BUNDLED_NEURAL
-
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = DarkCard),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .border(1.dp, DarkBorder, RoundedCornerShape(8.dp))
-                            ) {
-                                Column(modifier = Modifier.padding(8.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column {
-                                            Text(
-                                                text = "${lang.displayName} (${lang.nativeName})",
-                                                color = TextPrimary,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 12.sp
-                                            )
-                                            Text(
-                                                text = "Code: ${lang.code} • Sample: \"${lang.sampleText}\"",
-                                                color = TextMuted,
-                                                fontSize = 9.sp,
-                                                maxLines = 1
-                                            )
-                                        }
-
-                                        IconButton(
-                                            onClick = {
-                                                textToSpeech.speak(lang.sampleText, lang.code)
-                                                mainHandler.post {
-                                                    Toast.makeText(context, "Playing ${lang.displayName} via ${selectedTier.badge}", Toast.LENGTH_SHORT).show()
-                                                }
-                                            },
-                                            modifier = Modifier.size(28.dp)
-                                        ) {
-                                            Icon(
-                                                Icons.AutoMirrored.Filled.VolumeUp,
-                                                contentDescription = "Test speech",
-                                                tint = CyberCyan,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(Modifier.height(4.dp))
-
-                                    // Tier Selection Chips
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        TtsTier.values().forEach { tier ->
-                                            val isChosen = tier == selectedTier
-                                            val isAvailable = when (tier) {
-                                                TtsTier.TIER_1_SYSTEM_HD -> diag?.isTier1Available ?: false
-                                                TtsTier.TIER_2_BUNDLED_NEURAL -> true
-                                                TtsTier.TIER_3_FAILSAFE -> true
-                                            }
-
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(6.dp))
-                                                    .background(if (isChosen) CyberCyan else DarkSurface)
-                                                    .border(
-                                                        1.dp,
-                                                        if (isChosen) CyberCyan else if (isAvailable) DarkBorder else CrimsonAlert.copy(alpha = 0.5f),
-                                                        RoundedCornerShape(6.dp)
-                                                    )
-                                                    .clickable {
-                                                        textToSpeech.readinessManager.setPreferredTier(lang.code, tier)
-                                                    }
-                                                    .padding(horizontal = 5.dp, vertical = 2.dp)
-                                            ) {
-                                                Text(
-                                                    text = tier.badge,
-                                                    color = if (isChosen) DarkBg else if (isAvailable) TextSecondary else TextMuted,
-                                                    fontSize = 8.sp,
-                                                    fontWeight = if (isChosen) FontWeight.Bold else FontWeight.Normal
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -867,7 +728,7 @@ private fun MessageCard(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = "Speak using offline TTS",
+                            contentDescription = "Speak using AI4Bharat TTS",
                             tint = CyberCyan,
                             modifier = Modifier.size(14.dp)
                         )
