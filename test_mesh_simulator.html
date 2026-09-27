@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IndicMesh Multi-Hop Voice Simulator (100% Offline)</title>
+    <style>
+        :root {
+            --bg-dark: #0a0f1d;
+            --surface-dark: #131d33;
+            --card-dark: #1b2845;
+            --border-dark: #2e3f66;
+            --cyan: #00f5d4;
+            --emerald: #10b981;
+            --orange: #ff7a00;
+            --indigo: #6366f1;
+            --red: #ef4444;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+        body { background: var(--bg-dark); color: var(--text); padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-dark); padding-bottom: 15px; margin-bottom: 20px; }
+        .badge { background: rgba(16, 185, 129, 0.2); color: var(--emerald); padding: 4px 10px; border-radius: 6px; font-weight: bold; font-size: 12px; border: 1px solid var(--emerald); }
+        .container { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; }
+        .card { background: var(--surface-dark); border: 1px solid var(--border-dark); border-radius: 14px; padding: 18px; }
+        .card-title { font-size: 16px; font-weight: 700; color: var(--cyan); margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+        
+        /* Language Selector Bar */
+        .lang-bar { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 10px; margin-bottom: 15px; }
+        .lang-pill { background: var(--card-dark); border: 1px solid var(--border-dark); padding: 6px 12px; border-radius: 20px; font-size: 12px; color: var(--text); cursor: pointer; white-space: nowrap; transition: all 0.2s; }
+        .lang-pill.active { background: var(--orange); border-color: var(--orange); color: #000; font-weight: bold; }
+
+        /* Node Simulator Grid */
+        .nodes-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 15px; }
+        .node-box { background: var(--card-dark); border: 2px solid var(--border-dark); border-radius: 10px; padding: 14px; text-align: center; transition: all 0.3s; }
+        .node-box.active { border-color: var(--cyan); box-shadow: 0 0 15px rgba(0, 245, 212, 0.2); }
+        .node-box.relaying { border-color: var(--orange); box-shadow: 0 0 15px rgba(255, 122, 0, 0.3); animation: pulse 0.6s infinite alternate; }
+        .node-title { font-weight: bold; font-size: 13px; color: var(--text); }
+        .node-role { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+        .node-lang { font-size: 11px; color: var(--cyan); background: rgba(0, 245, 212, 0.1); border-radius: 4px; padding: 2px 6px; display: inline-block; margin-bottom: 8px; }
+        
+        /* PTT Button */
+        .ptt-btn { background: linear-gradient(135deg, var(--cyan), var(--indigo)); color: #000; border: none; padding: 10px 14px; border-radius: 50px; font-weight: bold; cursor: pointer; width: 100%; font-size: 13px; transition: transform 0.1s; display: flex; align-items: center; justify-content: center; gap: 6px; }
+        .ptt-btn:active, .ptt-btn.recording { background: linear-gradient(135deg, var(--red), var(--orange)); color: #fff; box-shadow: 0 0 20px rgba(239, 68, 68, 0.6); transform: scale(0.98); }
+        
+        /* Canvas & Log */
+        canvas { width: 100%; height: 180px; background: #070b14; border-radius: 10px; border: 1px solid var(--border-dark); margin-bottom: 15px; }
+        .log-list { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+        .log-item { background: var(--card-dark); border-left: 3px solid var(--cyan); padding: 10px 14px; border-radius: 6px; font-size: 13px; }
+        .log-header { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+        .log-text { font-size: 14px; color: #fff; font-weight: 500; }
+        .route-badge { background: #0f172a; padding: 2px 6px; border-radius: 4px; color: var(--orange); font-family: monospace; font-size: 11px; }
+
+        @keyframes pulse { from { opacity: 0.7; } to { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div>
+            <h2>IndicMesh Voice 100% Offline Local Test Sandbox</h2>
+            <p style="color: var(--muted); font-size: 13px;">Running on Local Machine • 10 Indic Languages • Multi-Hop Mesh Simulation</p>
+        </div>
+        <div class="badge">OFFLINE SERVER ACTIVE (127.0.0.1:8000)</div>
+    </div>
+
+    <!-- 10 Indic Languages Selector -->
+    <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: bold;">SELECT TRANSMIT LANGUAGE (10 INDIC LANGUAGES):</div>
+    <div class="lang-bar" id="lang-bar"></div>
+
+    <div class="container">
+        <!-- Left Column: Virtual Mesh Nodes -->
+        <div class="card">
+            <div class="card-title">
+                <span>VIRTUAL PHONE NODES (Multi-Hop Mesh)</span>
+                <span style="font-size: 12px; color: var(--muted);">Range per node: ~25m</span>
+            </div>
+
+            <div class="nodes-grid">
+                <!-- Node A -->
+                <div class="node-box active" id="node-a">
+                    <div class="node-title">Phone A (Sender)</div>
+                    <div class="node-role">Position: 0m</div>
+                    <div class="node-lang" id="node-a-lang">Hindi (हिन्दी)</div>
+                    <button class="ptt-btn" id="ptt-a" onmousedown="startPTT('NODE_A')" onmouseup="stopPTT()" ontouchstart="startPTT('NODE_A')" ontouchend="stopPTT()">
+                        🎙️ Hold to Speak
+                    </button>
+                </div>
+
+                <!-- Node B (Intermediate Relay) -->
+                <div class="node-box" id="node-b">
+                    <div class="node-title">Phone B (Relay)</div>
+                    <div class="node-role">Position: 25m (Bridge)</div>
+                    <div class="node-lang">Relay Repeater</div>
+                    <p style="font-size: 11px; color: var(--muted); margin-top: 6px;">Forwards packets between A & C</p>
+                </div>
+
+                <!-- Node C (Receiver) -->
+                <div class="node-box" id="node-c">
+                    <div class="node-title">Phone C (Target)</div>
+                    <div class="node-role">Position: 50m (Out of range)</div>
+                    <div class="node-lang" id="node-c-lang">Target Receiver</div>
+                    <button class="ptt-btn" id="ptt-c" onmousedown="startPTT('NODE_C')" onmouseup="stopPTT()" ontouchstart="startPTT('NODE_C')" ontouchend="stopPTT()">
+                        🎙️ Hold to Speak
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quick Text Input -->
+            <div style="display: flex; gap: 8px; margin-top: 10px;">
+                <input type="text" id="quick-input" placeholder="Type a phrase in Hindi/Gujarati/Tamil/etc..." style="flex: 1; padding: 10px 12px; background: var(--card-dark); border: 1px solid var(--border-dark); border-radius: 8px; color: #fff; outline: none; font-size: 13px;">
+                <button onclick="sendQuickMessage()" style="background: var(--orange); color: #000; border: none; padding: 10px 16px; border-radius: 8px; font-weight: bold; cursor: pointer;">Send over Mesh</button>
+            </div>
+            
+            <div style="margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap;" id="sample-presets"></div>
+        </div>
+
+        <!-- Right Column: Live Mesh Topology & Packet Inspector -->
+        <div class="card">
+            <div class="card-title">
+                <span>LIVE TOPOLOGY GRAPH</span>
+                <span id="hop-counter" style="font-size: 12px; color: var(--emerald);">0 Packets Relayed</span>
+            </div>
+
+            <canvas id="meshCanvas"></canvas>
+
+            <div class="card-title" style="font-size: 13px; margin-top: 8px;">
+                <span>DECODED SPEECH & MESH PACKET FEED</span>
+            </div>
+
+            <div class="log-list" id="log-list">
+                <div class="log-item">
+                    <div class="log-header">
+                        <span>SYSTEM READY</span>
+                        <span>0 Hops</span>
+                    </div>
+                    <div class="log-text" style="color: var(--muted); font-size: 12px;">Hold the PTT button to speak in any language or click a preset. Watch Phone B forward the packet multi-hop to Phone C and trigger offline TTS synthesis!</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const LANGUAGES = [
+            { code: "hi", name: "Hindi", native: "हिन्दी", locale: "hi-IN", sample: "नमस्ते, आप कैसे हैं? यह पूरी तरह से ऑफलाइन मेश नेटवर्क है।" },
+            { code: "gu", name: "Gujarati", native: "ગુજરાતી", locale: "gu-IN", sample: "નમસ્તે, તમે કેમ છો? આ 100% ઑફલાઇન મેશ નેટવર્ક છે." },
+            { code: "mr", name: "Marathi", native: "मराठी", locale: "mr-IN", sample: "नमस्कार, तुम्ही कसे आहात? हे संपूर्ण ऑफलाइन मेश नेटवर्क आहे." },
+            { code: "kn", name: "Kannada", native: "ಕನ್ನಡ", locale: "kn-IN", sample: "ನಮಸ್ಕಾರ, ನೀವು ಹೇಗಿದ್ದೀರಿ? ಇದು ಸಂಪೂರ್ಣ ಆಫ್‌ಲೈನ್ ಮೆಶ್ ನೆಟ್‌ವರ್ಕ್." },
+            { code: "ml", name: "Malayalam", native: "മലയാളം", locale: "ml-IN", sample: "നമസ്കാരം, സുഖമാണോ? ഇത് സമ്പൂർണ്ണ ഓഫ്‌ലൈൻ മെഷ് നെറ്റ്‌വർക്ക് ആണ്." },
+            { code: "ta", name: "Tamil", native: "தமிழ்", locale: "ta-IN", sample: "வணக்கம், நீங்கள் எப்படி இருக்கிறீர்கள்? இது முழுமையான ஆஃப்லைன் மெஷ் நெட்வொர்க்." },
+            { code: "te", name: "Telugu", native: "తెలుగు", locale: "te-IN", sample: "నమస్కారం, మీరు ఎలా ఉన్నారు? ఇది పూర్తి ఆఫ్‌లైన్ మెష్ నెట్‌వర్క్." },
+            { code: "or", name: "Odia", native: "ଓଡ଼ିଆ", locale: "or-IN", sample: "ନମସ୍କାର, ଆପଣ କେମିତି ଅଛନ୍ତି? ଏହା ସମ୍ପୂର୍ଣ୍ଣ ଅଫଲାଇନ ମେସ ନେଟୱର୍କ।" },
+            { code: "bn", name: "Bengali", native: "বাংলা", locale: "bn-IN", sample: "নমস্কার, আপনি কেমন আছেন? এটি সম্পূর্ণ অফলাইন মেশ নেটওয়ার্ক।" },
+            { code: "en", name: "English", native: "English", locale: "en-US", sample: "Hello! Testing 100% offline speech recognition and synthesis." }
+        ];
+
+        let currentLang = LANGUAGES[0];
+        let relayedCount = 0;
+
+        // Render Languages Bar
+        const langBar = document.getElementById('lang-bar');
+        LANGUAGES.forEach((l, idx) => {
+            const pill = document.createElement('div');
+            pill.className = `lang-pill ${idx === 0 ? 'active' : ''}`;
+            pill.id = `pill-${l.code}`;
+            pill.innerText = `${l.native} (${l.name})`;
+            pill.onclick = () => selectLang(l);
+            langBar.appendChild(pill);
+        });
+
+        function selectLang(lang) {
+            currentLang = lang;
+            document.querySelectorAll('.lang-pill').forEach(p => p.classList.remove('active'));
+            document.getElementById(`pill-${lang.code}`).classList.add('active');
+            document.getElementById('node-a-lang').innerText = `${lang.native} (${lang.name})`;
+            document.getElementById('quick-input').value = lang.sample;
+            updatePresets();
+        }
+
+        function updatePresets() {
+            const container = document.getElementById('sample-presets');
+            container.innerHTML = '';
+            const btn = document.createElement('button');
+            btn.style = "background: #1b2845; border: 1px solid #2e3f66; color: #94a3b8; padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer;";
+            btn.innerText = `Sample: "${currentLang.sample.substring(0, 30)}..."`;
+            btn.onclick = () => { document.getElementById('quick-input').value = currentLang.sample; };
+            container.appendChild(btn);
+        }
+
+        // Canvas Topology Rendering
+        const canvas = document.getElementById('meshCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.clientWidth - 40;
+            canvas.height = 180;
+            drawTopology();
+        }
+        window.addEventListener('resize', resizeCanvas);
+        setTimeout(resizeCanvas, 100);
+
+        function drawTopology(packetPos = null) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const y = canvas.height / 2;
+            const xA = 50;
+            const xB = canvas.width / 2;
+            const xC = canvas.width - 50;
+
+            ctx.strokeStyle = '#2e3f66';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([6, 6]);
+            ctx.beginPath();
+            ctx.moveTo(xA, y);
+            ctx.lineTo(xB, y);
+            ctx.lineTo(xC, y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            drawNode(xA, y, 'Phone A', '#00f5d4');
+            drawNode(xB, y, 'Phone B (Relay)', '#ff7a00');
+            drawNode(xC, y, 'Phone C', '#10b981');
+
+            if (packetPos) {
+                ctx.fillStyle = '#00f5d4';
+                ctx.shadowColor = '#00f5d4';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.arc(packetPos.x, packetPos.y, 8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        function drawNode(x, y, label, color) {
+            ctx.fillStyle = color + '33';
+            ctx.beginPath();
+            ctx.arc(x, y, 20, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(x, y, 10, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#f8fafc';
+            ctx.font = '11px Segoe UI';
+            ctx.textAlign = 'center';
+            ctx.fillText(label, x, y + 28);
+        }
+
+        // STT Logic
+        let recognition = null;
+        let activeSpeaker = 'NODE_A';
+
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRec();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+
+            recognition.onresult = (e) => {
+                const text = e.results[0][0].transcript;
+                routeMeshPacket(activeSpeaker, text, currentLang.code);
+            };
+        }
+
+        function startPTT(nodeId) {
+            activeSpeaker = nodeId;
+            document.getElementById(nodeId === 'NODE_A' ? 'ptt-a' : 'ptt-c').classList.add('recording');
+            if (recognition) {
+                try {
+                    recognition.lang = currentLang.locale;
+                    recognition.start();
+                } catch(e) {}
+            }
+        }
+
+        function stopPTT() {
+            document.getElementById('ptt-a').classList.remove('recording');
+            document.getElementById('ptt-c').classList.remove('recording');
+            if (recognition) {
+                try { recognition.stop(); } catch(e) {}
+            }
+        }
+
+        function sendQuickMessage() {
+            const input = document.getElementById('quick-input');
+            if (input.value.trim()) {
+                routeMeshPacket('NODE_A', input.value.trim(), currentLang.code);
+            }
+        }
+
+        function routeMeshPacket(senderId, text, langCode) {
+            const targetId = senderId === 'NODE_A' ? 'NODE_C' : 'NODE_A';
+            const logList = document.getElementById('log-list');
+
+            document.getElementById('node-b').classList.add('relaying');
+            
+            // Animate Hop 1: Sender -> Relay
+            animatePacket(senderId === 'NODE_A' ? 50 : canvas.width - 50, canvas.width / 2, () => {
+                relayedCount++;
+                document.getElementById('hop-counter').innerText = `${relayedCount} Packets Relayed Multi-Hop`;
+
+                // Animate Hop 2: Relay -> Target
+                animatePacket(canvas.width / 2, senderId === 'NODE_A' ? canvas.width - 50 : 50, () => {
+                    document.getElementById('node-b').classList.remove('relaying');
+
+                    // Play TTS Output via local backend or speech synthesis
+                    playOfflineAudio(text, langCode);
+
+                    // Add log entry
+                    const item = document.createElement('div');
+                    item.className = 'log-item';
+                    item.innerHTML = `
+                        <div class="log-header">
+                            <span>From: <b>${senderId}</b> ➔ Target: <b>${targetId}</b></span>
+                            <span class="route-badge">${senderId} ➔ NODE_B (Relay) ➔ ${targetId} (2 Hops)</span>
+                        </div>
+                        <div class="log-text">"${text}"</div>
+                        <div style="font-size: 11px; color: var(--cyan); margin-top: 4px;">Language: ${LANGUAGES.find(l=>l.code===langCode)?.name || langCode}</div>
+                    `;
+                    logList.insertBefore(item, logList.firstChild);
+                });
+            });
+        }
+
+        function animatePacket(startX, endX, onComplete) {
+            let progress = 0;
+            const startTime = performance.now();
+            const duration = 350;
+
+            function frame(now) {
+                const elapsed = now - startTime;
+                progress = Math.min(elapsed / duration, 1);
+                const currentX = startX + (endX - startX) * progress;
+                drawTopology({ x: currentX, y: canvas.height / 2 });
+
+                if (progress < 1) {
+                    requestAnimationFrame(frame);
+                } else {
+                    drawTopology();
+                    if (onComplete) onComplete();
+                }
+            }
+            requestAnimationFrame(frame);
+        }
+
+        // Play Offline Synthesized Audio
+        function playOfflineAudio(text, langCode) {
+            // 1. Try local offline backend TTS endpoint
+            fetch('/api/tts/synthesize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: text, lang_code: langCode })
+            })
+            .then(res => res.blob())
+            .then(blob => {
+                const audioUrl = URL.createObjectURL(blob);
+                const audio = new Audio(audioUrl);
+                audio.play().catch(e => {
+                    fallbackBrowserTTS(text, langCode);
+                });
+            })
+            .catch(() => {
+                fallbackBrowserTTS(text, langCode);
+            });
+        }
+
+        function fallbackBrowserTTS(text, langCode) {
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                window.speechSynthesis.resume();
+                const utterance = new SpeechSynthesisUtterance(text);
+                const l = LANGUAGES.find(item => item.code === langCode);
+                utterance.lang = l ? l.locale : 'en-US';
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        selectLang(LANGUAGES[0]);
+    </script>
+</body>
+</html>

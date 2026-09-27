@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Indic STT & TTS Local Test Studio (10 Languages)</title>
+    <style>
+        :root {
+            --bg-dark: #070b14;
+            --surface-dark: #0f172a;
+            --card-dark: #1b2845;
+            --border-dark: #2e3f66;
+            --cyan: #00f5d4;
+            --emerald: #10b981;
+            --orange: #ff7a00;
+            --indigo: #6366f1;
+            --red: #ef4444;
+            --text-primary: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+        body { background: var(--bg-dark); color: var(--text-primary); padding: 24px; }
+        
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-dark); padding-bottom: 16px; margin-bottom: 24px; }
+        .title-group h1 { font-size: 22px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 10px; }
+        .title-group p { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+        .badge { background: rgba(0, 245, 212, 0.15); color: var(--cyan); border: 1px solid var(--cyan); padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+
+        /* Audio Diagnostics Banner */
+        .diag-banner { background: #131d33; border: 1px solid var(--border-dark); border-radius: 10px; padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .diag-btn { background: var(--card-dark); border: 1px solid var(--cyan); color: var(--cyan); padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; }
+        .diag-btn:hover { background: var(--cyan); color: #000; }
+
+        /* Language Grid */
+        .section-title { font-size: 13px; font-weight: 700; color: var(--text-muted); letter-spacing: 0.8px; margin-bottom: 10px; text-transform: uppercase; }
+        .lang-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 24px; }
+        .lang-card { background: var(--surface-dark); border: 2px solid var(--border-dark); border-radius: 12px; padding: 12px; cursor: pointer; transition: all 0.2s; text-align: center; }
+        .lang-card:hover { border-color: var(--cyan); transform: translateY(-2px); }
+        .lang-card.active { border-color: var(--orange); background: linear-gradient(145deg, #1b2845, #241d3b); box-shadow: 0 0 16px rgba(255, 122, 0, 0.3); }
+        .lang-native { font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 2px; }
+        .lang-name { font-size: 12px; color: var(--text-muted); }
+        .lang-code { font-size: 10px; color: var(--cyan); font-family: monospace; }
+
+        /* Main Workspace: 2 Column Layout */
+        .workspace { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .panel { background: var(--surface-dark); border: 1px solid var(--border-dark); border-radius: 16px; padding: 20px; }
+        .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        .panel-title { font-size: 16px; font-weight: 700; color: var(--cyan); display: flex; align-items: center; gap: 8px; }
+
+        /* STT Panel */
+        .mic-container { display: flex; flex-direction: column; align-items: center; padding: 20px 0; }
+        .mic-btn { width: 90px; height: 90px; border-radius: 50%; border: none; background: linear-gradient(135deg, var(--cyan), var(--indigo)); color: #000; font-size: 32px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; box-shadow: 0 0 20px rgba(0, 245, 212, 0.3); }
+        .mic-btn.listening { background: linear-gradient(135deg, var(--red), var(--orange)); color: #fff; box-shadow: 0 0 30px rgba(239, 68, 68, 0.7); transform: scale(1.05); animation: pulse 0.8s infinite alternate; }
+        .mic-status { margin-top: 14px; font-size: 13px; font-weight: 600; color: var(--text-muted); }
+
+        .waveform-box { width: 100%; height: 50px; background: #070b14; border-radius: 10px; border: 1px solid var(--border-dark); margin: 15px 0; overflow: hidden; display: flex; align-items: center; justify-content: center; gap: 3px; padding: 0 10px; }
+        .wave-bar { width: 4px; height: 8px; background: var(--cyan); border-radius: 4px; transition: height 0.05s; }
+
+        .transcript-output { width: 100%; min-height: 110px; background: #070b14; border: 1px solid var(--border-dark); border-radius: 10px; padding: 14px; font-size: 15px; color: #fff; line-height: 1.5; outline: none; }
+        
+        /* TTS Panel */
+        .tts-input { width: 100%; height: 100px; background: #070b14; border: 1px solid var(--border-dark); border-radius: 10px; padding: 14px; font-size: 15px; color: #fff; resize: vertical; outline: none; margin-bottom: 12px; }
+        .quick-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+        .preset-btn { background: var(--card-dark); border: 1px solid var(--border-dark); color: var(--text-muted); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; transition: all 0.2s; }
+        .preset-btn:hover { color: #fff; border-color: var(--cyan); }
+
+        .voice-select { width: 100%; padding: 8px 12px; background: var(--card-dark); border: 1px solid var(--border-dark); border-radius: 8px; color: #fff; font-size: 12px; margin-bottom: 14px; outline: none; }
+
+        .controls-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; font-size: 12px; color: var(--text-muted); }
+        .slider-group { display: flex; flex-direction: column; gap: 4px; }
+        .slider-group input { accent-color: var(--orange); }
+
+        .action-btn { width: 100%; padding: 14px; border-radius: 10px; border: none; font-size: 15px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; }
+        .play-btn { background: linear-gradient(135deg, var(--orange), #d946ef); color: #fff; }
+        .play-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+
+        /* Loopback Tester */
+        .loopback-box { grid-column: 1 / -1; background: var(--surface-dark); border: 2px dashed var(--indigo); border-radius: 14px; padding: 16px; display: flex; align-items: center; justify-content: space-between; }
+        .loopback-info h3 { font-size: 14px; color: #fff; margin-bottom: 2px; }
+        .loopback-info p { font-size: 12px; color: var(--text-muted); }
+        .loop-btn { background: var(--indigo); color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; }
+
+        @keyframes pulse { from { transform: scale(1.02); } to { transform: scale(1.08); } }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="title-group">
+            <h1>🎙️ Indic STT & TTS Local Test Studio</h1>
+            <p>Direct standalone testing for all 10 Indic languages with Live Audio Recording & Synthesis</p>
+        </div>
+        <div class="badge">10 INDIC LANGUAGES READY</div>
+    </div>
+
+    <!-- Quick Audio Output Test Banner -->
+    <div class="diag-banner">
+        <div>
+            <span style="font-weight: bold; color: var(--emerald);">🔊 Speaker & Voice Engine Diagnostics:</span>
+            <span id="voice-detected-status" style="font-size: 12px; color: var(--text-muted); margin-left: 8px;">Detecting voices...</span>
+        </div>
+        <button class="diag-btn" onclick="testSpeakerBeep()">🔔 Test Speaker Output (Chime)</button>
+    </div>
+
+    <!-- 10 Languages Grid Selector -->
+    <div class="section-title">Step 1: Select Target Indic Language</div>
+    <div class="lang-grid" id="lang-grid"></div>
+
+    <!-- STT & TTS Workspaces -->
+    <div class="workspace">
+        
+        <!-- Left: Speech Recognition (STT) -->
+        <div class="panel">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <span>🎤</span> Speech-To-Text (STT) Tester
+                </div>
+                <span id="stt-lang-tag" style="font-size: 11px; color: var(--cyan); font-family: monospace;">hi-IN</span>
+            </div>
+
+            <div class="mic-container">
+                <button class="mic-btn" id="mic-btn" onclick="toggleSTT()">🎙️</button>
+                <div class="mic-status" id="mic-status">Click Microphone to Start Speaking</div>
+            </div>
+
+            <!-- Dynamic Waveform -->
+            <div class="waveform-box" id="waveform-box"></div>
+
+            <div class="section-title" style="margin-top: 10px;">Transcribed Output (Acoustic Decoding):</div>
+            <div class="transcript-output" id="transcript-output" placeholder="Live speech transcript will appear here..."></div>
+            
+            <button onclick="copyToTTS()" style="margin-top: 10px; background: transparent; border: 1px solid var(--border-dark); color: var(--cyan); padding: 8px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; width: 100%;">
+                ⬇️ Copy Transcribed Text to TTS Input
+            </button>
+        </div>
+
+        <!-- Right: Text to Speech (TTS) -->
+        <div class="panel">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <span>🔊</span> Text-To-Speech (TTS) Tester
+                </div>
+                <span id="tts-voice-status" style="font-size: 11px; color: var(--emerald);">Ready</span>
+            </div>
+
+            <div class="section-title">Active TTS Voice / Engine:</div>
+            <select class="voice-select" id="voice-select" onchange="onVoiceSelected()"></select>
+
+            <div class="section-title">Native Text Input:</div>
+            <textarea class="tts-input" id="tts-input" placeholder="Type or select a native script phrase below..."></textarea>
+
+            <div class="section-title">Quick Native Script Presets:</div>
+            <div class="quick-presets" id="quick-presets"></div>
+
+            <div class="controls-row">
+                <div class="slider-group">
+                    <label>Speech Rate: <span id="rate-val">1.0x</span></label>
+                    <input type="range" id="rate-slider" min="0.5" max="1.8" step="0.1" value="1.0" oninput="document.getElementById('rate-val').innerText = this.value + 'x'">
+                </div>
+                <div class="slider-group">
+                    <label>Pitch: <span id="pitch-val">1.0</span></label>
+                    <input type="range" id="pitch-slider" min="0.5" max="1.5" step="0.1" value="1.0" oninput="document.getElementById('pitch-val').innerText = this.value">
+                </div>
+            </div>
+
+            <button class="action-btn play-btn" id="play-btn" onclick="playTTS()">
+                <span>🔊 Synthesize & Speak Native Voice</span>
+            </button>
+        </div>
+
+        <!-- Bottom: Round-Trip Echo Loopback Test -->
+        <div class="loopback-box">
+            <div class="loopback-info">
+                <h3>🔄 Full Round-Trip Loopback Test (STT ➔ TTS)</h3>
+                <p>Speak in your selected language; it will transcribe in real time and immediately speak back your words.</p>
+            </div>
+            <button class="loop-btn" id="loop-btn" onclick="startLoopbackTest()">Start Echo Test</button>
+        </div>
+
+    </div>
+
+    <script>
+        const LANGUAGES = [
+            { code: "hi", name: "Hindi", native: "हिन्दी", locale: "hi-IN", sample: "नमस्ते, आप कैसे हैं? यह ऑफलाइन मेश नेटवर्क की टेस्टिंग है।" },
+            { code: "gu", name: "Gujarati", native: "ગુજરાતી", locale: "gu-IN", sample: "નમસ્તે, તમે કેમ છો? આ ઑફલાઇન મેશ નેટવર્ક ટેસ્ટિંગ છે." },
+            { code: "mr", name: "Marathi", native: "मराठी", locale: "mr-IN", sample: "नमस्कार, तुम्ही कसे आहात? हे ऑफलाइन मेश नेटवर्क टेस्टिंग आहे." },
+            { code: "kn", name: "Kannada", native: "ಕನ್ನಡ", locale: "kn-IN", sample: "ನಮಸ್ಕಾರ, ನೀವು ಹೇಗಿದ್ದೀರಿ? ಇದು ಆಫ್‌ಲೈನ್ ಮೆಶ್ ನೆಟ್‌ವರ್ಕ್ ಪರೀಕ್ಷೆ." },
+            { code: "ml", name: "Malayalam", native: "മലയാളം", locale: "ml-IN", sample: "നമസ്കാരം, സുഖമാണോ? ഇത് ഓഫ്‌ലൈൻ മെഷ് നെറ്റ്‌വർക്ക് ടെസ്റ്റിംഗ് ആണ്." },
+            { code: "ta", name: "Tamil", native: "தமிழ்", locale: "ta-IN", sample: "வணக்கம், நீங்கள் எப்படி இருக்கிறீர்கள்? இது ஆஃப்லைன் மெஷ் நெட்வொர்க் சோதனை." },
+            { code: "te", name: "Telugu", native: "తెలుగు", locale: "te-IN", sample: "నమస్కారం, మీరు ఎలా ఉన్నారు? ఇది ఆఫ్‌లైన్ మెష్ నెట్‌వర్క్ టెస్టింగ్." },
+            { code: "or", name: "Odia", native: "ଓଡ଼ିଆ", locale: "or-IN", sample: "ନମସ୍କାର, ଆପଣ କେମିତି ଅଛନ୍ତି? ଏହା ଅଫଲାଇନ ମେସ ନେଟୱର୍କ ପରୀକ୍ଷଣ।" },
+            { code: "bn", name: "Bengali", native: "বাংলা", locale: "bn-IN", sample: "নমস্কার, আপনি কেমন আছেন? এটি অফলাইন মেশ নেটওয়ার্ক টেস্টিং।" },
+            { code: "en", name: "English", native: "English", locale: "en-US", sample: "Hello! Testing 100% offline speech recognition and synthesis." }
+        ];
+
+        let currentLang = LANGUAGES[0];
+        let isListening = false;
+        let recognition = null;
+        let waveInterval = null;
+        let availableVoices = [];
+        let selectedVoice = null;
+
+        // Populate Language Grid
+        const grid = document.getElementById('lang-grid');
+        LANGUAGES.forEach((lang, idx) => {
+            const card = document.createElement('div');
+            card.className = `lang-card ${idx === 0 ? 'active' : ''}`;
+            card.id = `lang-${lang.code}`;
+            card.onclick = () => selectLanguage(lang);
+            card.innerHTML = `
+                <div class="lang-native">${lang.native}</div>
+                <div class="lang-name">${lang.name}</div>
+                <div class="lang-code">${lang.locale}</div>
+            `;
+            grid.appendChild(card);
+        });
+
+        // Initialize Waveform bars
+        const waveBox = document.getElementById('waveform-box');
+        for (let i = 0; i < 28; i++) {
+            const bar = document.createElement('div');
+            bar.className = 'wave-bar';
+            bar.id = `bar-${i}`;
+            waveBox.appendChild(bar);
+        }
+
+        // Voice Loading & Management
+        function populateVoices() {
+            if (!('speechSynthesis' in window)) return;
+            availableVoices = window.speechSynthesis.getVoices();
+            const voiceSelect = document.getElementById('voice-select');
+            voiceSelect.innerHTML = '';
+
+            if (availableVoices.length > 0) {
+                document.getElementById('voice-detected-status').innerText = `${availableVoices.length} System Voices Detected`;
+                document.getElementById('voice-detected-status').style.color = "var(--cyan)";
+
+                availableVoices.forEach((v, index) => {
+                    const opt = document.createElement('option');
+                    opt.value = index;
+                    opt.innerText = `${v.name} (${v.lang})${v.default ? ' [Default]' : ''}`;
+                    voiceSelect.appendChild(opt);
+                });
+
+                matchBestVoiceForLanguage();
+            } else {
+                document.getElementById('voice-detected-status').innerText = "Loading system voice packs...";
+            }
+        }
+
+        if ('speechSynthesis' in window) {
+            populateVoices();
+            window.speechSynthesis.onvoiceschanged = populateVoices;
+        }
+
+        function matchBestVoiceForLanguage() {
+            if (availableVoices.length === 0) return;
+            const langPrefix = currentLang.code.toLowerCase();
+            const localeCode = currentLang.locale.toLowerCase().replace('_', '-');
+
+            // 1. Exact locale match (e.g. hi-IN)
+            let matchedIndex = availableVoices.findIndex(v => v.lang.toLowerCase().replace('_', '-') === localeCode);
+            
+            // 2. Prefix match (e.g. hi)
+            if (matchedIndex === -1) {
+                matchedIndex = availableVoices.findIndex(v => v.lang.toLowerCase().startsWith(langPrefix));
+            }
+
+            // 3. Fallback: English or Indian English voice
+            if (matchedIndex === -1) {
+                matchedIndex = availableVoices.findIndex(v => v.lang.toLowerCase().includes('en-in') || v.lang.toLowerCase().includes('en-us') || v.lang.toLowerCase().startsWith('en'));
+            }
+
+            if (matchedIndex === -1) matchedIndex = 0;
+
+            const voiceSelect = document.getElementById('voice-select');
+            voiceSelect.selectedIndex = matchedIndex;
+            selectedVoice = availableVoices[matchedIndex];
+        }
+
+        function onVoiceSelected() {
+            const idx = document.getElementById('voice-select').value;
+            selectedVoice = availableVoices[idx];
+        }
+
+        function selectLanguage(lang) {
+            currentLang = lang;
+            document.querySelectorAll('.lang-card').forEach(c => c.classList.remove('active'));
+            document.getElementById(`lang-${lang.code}`).classList.add('active');
+
+            document.getElementById('stt-lang-tag').innerText = lang.locale;
+            document.getElementById('tts-input').value = lang.sample;
+            
+            matchBestVoiceForLanguage();
+            updatePresets();
+
+            if (isListening) {
+                stopSTT();
+                startSTT();
+            }
+        }
+
+        function updatePresets() {
+            const container = document.getElementById('quick-presets');
+            container.innerHTML = '';
+            
+            const presets = [
+                currentLang.sample,
+                `1 2 3 4 5 6 7 8 9 10 (${currentLang.name})`,
+                `Emergency Alert: Need assistance at node 02!`
+            ];
+
+            presets.forEach(p => {
+                const btn = document.createElement('button');
+                btn.className = 'preset-btn';
+                btn.innerText = p.length > 35 ? p.substring(0, 32) + '...' : p;
+                btn.onclick = () => { document.getElementById('tts-input').value = p; };
+                container.appendChild(btn);
+            });
+        }
+
+        // Test Speaker WebAudio Chime
+        function testSpeakerBeep() {
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                const ctx = new AudioCtx();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+                osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15); // A5
+
+                gain.gain.setValueAtTime(0.3, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+
+                osc.start();
+                osc.stop(ctx.currentTime + 0.4);
+
+                // Speak confirmation
+                playTTS("Speaker output is working perfectly.");
+            } catch (e) {
+                alert("Audio output error: " + e.message);
+            }
+        }
+
+        // Speech Recognition
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRec();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+
+            recognition.onresult = (event) => {
+                let interim = '';
+                let final = '';
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        final += event.results[i][0].transcript;
+                    } else {
+                        interim += event.results[i][0].transcript;
+                    }
+                }
+                const output = document.getElementById('transcript-output');
+                output.innerHTML = `<span style="color:#fff;">${final}</span> <span style="color:var(--cyan); opacity:0.8;">${interim}</span>`;
+
+                if (isLoopbackMode && final) {
+                    playTTS(final);
+                }
+            };
+
+            recognition.onerror = (e) => {
+                console.error("STT error:", e);
+                document.getElementById('mic-status').innerText = `Error: ${e.error}`;
+            };
+        }
+
+        function toggleSTT() {
+            if (isListening) {
+                stopSTT();
+            } else {
+                startSTT();
+            }
+        }
+
+        function startSTT() {
+            if (!recognition) {
+                alert("Speech recognition is not supported in this browser. Please use Chrome/Edge.");
+                return;
+            }
+            try {
+                recognition.lang = currentLang.locale;
+                recognition.start();
+                isListening = true;
+                document.getElementById('mic-btn').classList.add('listening');
+                document.getElementById('mic-status').innerText = `Listening in ${currentLang.name} (${currentLang.locale})...`;
+                startWaveformAnim();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function stopSTT() {
+            if (recognition) {
+                try { recognition.stop(); } catch(e) {}
+            }
+            isListening = false;
+            document.getElementById('mic-btn').classList.remove('listening');
+            document.getElementById('mic-status').innerText = 'Click Microphone to Start Speaking';
+            stopWaveformAnim();
+        }
+
+        function startWaveformAnim() {
+            waveInterval = setInterval(() => {
+                for (let i = 0; i < 28; i++) {
+                    const h = Math.floor(Math.random() * 38) + 6;
+                    document.getElementById(`bar-${i}`).style.height = `${h}px`;
+                }
+            }, 60);
+        }
+
+        function stopWaveformAnim() {
+            clearInterval(waveInterval);
+            for (let i = 0; i < 28; i++) {
+                document.getElementById(`bar-${i}`).style.height = `6px`;
+            }
+        }
+
+        function copyToTTS() {
+            const text = document.getElementById('transcript-output').innerText;
+            if (text) {
+                document.getElementById('tts-input').value = text;
+            }
+        }
+
+        function playTTS(customText = null) {
+            const text = customText || document.getElementById('tts-input').value;
+            if (!text) return;
+
+            if ('speechSynthesis' in window) {
+                // Fix Chrome paused synthesis bug
+                window.speechSynthesis.cancel();
+                window.speechSynthesis.resume();
+
+                const utterance = new SpeechSynthesisUtterance(text);
+                
+                // Explicitly assign selected voice
+                if (selectedVoice) {
+                    utterance.voice = selectedVoice;
+                }
+                utterance.lang = selectedVoice ? selectedVoice.lang : currentLang.locale;
+                utterance.rate = parseFloat(document.getElementById('rate-slider').value);
+                utterance.pitch = parseFloat(document.getElementById('pitch-slider').value);
+                
+                utterance.onstart = () => {
+                    document.getElementById('tts-voice-status').innerText = "🔊 Speaking...";
+                    document.getElementById('tts-voice-status').style.color = "var(--orange)";
+                };
+                utterance.onend = () => {
+                    document.getElementById('tts-voice-status').innerText = "Ready";
+                    document.getElementById('tts-voice-status').style.color = "var(--emerald)";
+                };
+                utterance.onerror = (e) => {
+                    console.error("TTS Error:", e);
+                    document.getElementById('tts-voice-status').innerText = "TTS Error: " + e.error;
+                    document.getElementById('tts-voice-status').style.color = "var(--red)";
+                };
+
+                window.speechSynthesis.speak(utterance);
+            } else {
+                alert("Text-to-speech is not supported in this browser.");
+            }
+        }
+
+        let isLoopbackMode = false;
+        function startLoopbackTest() {
+            isLoopbackMode = !isLoopbackMode;
+            const btn = document.getElementById('loop-btn');
+            if (isLoopbackMode) {
+                btn.innerText = "Stop Echo Test";
+                btn.style.background = "var(--red)";
+                startSTT();
+            } else {
+                btn.innerText = "Start Echo Test";
+                btn.style.background = "var(--indigo)";
+                stopSTT();
+            }
+        }
+
+        // Initialize with default
+        selectLanguage(LANGUAGES[0]);
+    </script>
+</body>
+</html>
